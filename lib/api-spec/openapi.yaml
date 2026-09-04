@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: feedback
+    description: Student feedback operations
+  - name: actions
+    description: University action tracking operations
 paths:
   /healthz:
     get:
@@ -24,7 +28,135 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /feedback:
+    get:
+      operationId: listFeedback
+      tags: [feedback]
+      summary: List student feedback
+      responses:
+        "200":
+          description: Student feedback records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Feedback"
+    post:
+      operationId: createFeedback
+      tags: [feedback]
+      summary: Create student feedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackInput"
+      responses:
+        "201":
+          description: Created feedback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feedback"
+  /feedback/{id}:
+    get:
+      operationId: getFeedback
+      tags: [feedback]
+      summary: Get one feedback record
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Feedback record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feedback"
+        "404":
+          description: Feedback not found
+    patch:
+      operationId: updateFeedback
+      tags: [feedback]
+      summary: Update feedback status
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackUpdate"
+      responses:
+        "200":
+          description: Updated feedback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feedback"
+        "404":
+          description: Feedback not found
+  /actions:
+    get:
+      operationId: listActions
+      tags: [actions]
+      summary: List university actions
+      responses:
+        "200":
+          description: University actions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Action"
+    post:
+      operationId: createAction
+      tags: [actions]
+      summary: Create an action from a feedback issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionInput"
+      responses:
+        "201":
+          description: Created action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Action"
+  /actions/{id}:
+    patch:
+      operationId: updateAction
+      tags: [actions]
+      summary: Update action status
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionUpdate"
+      responses:
+        "200":
+          description: Updated action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Action"
+        "404":
+          description: Action not found
 components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: number
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +165,55 @@ components:
           type: string
       required:
         - status
+    Feedback:
+      type: object
+      required: [id, category, location, rating, issue, message, status, createdAt]
+      properties:
+        id: { type: number }
+        category: { type: string }
+        location: { type: string }
+        rating: { type: number, minimum: 1, maximum: 5 }
+        issue: { type: string }
+        message: { type: string }
+        status: { type: string, enum: [New, "Under Review", "Action Taken", Measured] }
+        createdAt: { type: string, format: date-time }
+    FeedbackInput:
+      type: object
+      required: [category, location, rating, issue, message]
+      properties:
+        category: { type: string, minLength: 1 }
+        location: { type: string, minLength: 1 }
+        rating: { type: number, minimum: 1, maximum: 5 }
+        issue: { type: string, minLength: 1 }
+        message: { type: string, minLength: 1 }
+    FeedbackUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [New, "Under Review", "Action Taken", Measured] }
+    Action:
+      type: object
+      required: [id, feedbackId, issue, department, priority, status, createdAt, updatedAt]
+      properties:
+        id: { type: number }
+        feedbackId: { type: number }
+        issue: { type: string }
+        department: { type: string }
+        priority: { type: string, enum: [Low, Medium, High] }
+        status: { type: string, enum: [New, "Under Review", "Action Taken", Measured] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ActionInput:
+      type: object
+      required: [feedbackId, issue, department, priority]
+      properties:
+        feedbackId: { type: number }
+        issue: { type: string, minLength: 1 }
+        department: { type: string, minLength: 1 }
+        priority: { type: string, enum: [Low, Medium, High] }
+    ActionUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [New, "Under Review", "Action Taken", Measured] }
 

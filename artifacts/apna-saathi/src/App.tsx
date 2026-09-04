@@ -1,9 +1,22 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { Route, Router as WouterRouter, Switch, useRoute } from 'wouter';
+import {
+  getListActionsQueryKey,
+  getListFeedbackQueryKey,
+  useCreateFeedback,
+  useListActions,
+  useListFeedback,
+  useUpdateAction,
+} from '@workspace/api-client-react';
+import type { ActionStatus } from '@workspace/api-client-react';
+import AdminApp from './admin/AdminApp';
 import {
   Activity,
   ArrowDownRight,
   ArrowRight,
+  ArrowUpRight,
   Check,
   ClipboardList,
   Gauge,
@@ -48,10 +61,10 @@ const seededRatingData = [
 ];
 
 const initialCategories = [
-  { name: 'Hostel & housing', value: 31, color: '#df7064' },
-  { name: 'Campus life', value: 24, color: '#1e6a5b' },
-  { name: 'Teaching & learning', value: 22, color: '#eab171' },
-  { name: 'Wellbeing', value: 14, color: '#7fae9a' },
+  { name: 'Hostel', value: 31, color: '#df7064' },
+  { name: 'Mess / Food', value: 24, color: '#1e6a5b' },
+  { name: 'Academic', value: 22, color: '#eab171' },
+  { name: 'Well-being', value: 14, color: '#7fae9a' },
   { name: 'Other', value: 9, color: '#a9a89a' },
 ];
 
@@ -122,15 +135,49 @@ function Brand() {
   );
 }
 
-function App() {
-  const [feedbackCount, setFeedbackCount] = useState(42);
-  const [averageRating, setAverageRating] = useState(4.6);
-  const [ratingData, setRatingData] = useState(seededRatingData);
-  const [categories, setCategories] = useState(initialCategories);
-  const [statusIndex, setStatusIndex] = useState<StatusIndex>(2);
+function StudentApp() {
+  const queryClient = useQueryClient();
+  const feedbackQuery = useListFeedback({ query: { queryKey: getListFeedbackQueryKey(), refetchOnWindowFocus: false } });
+  const actionsQuery = useListActions({ query: { queryKey: getListActionsQueryKey(), refetchOnWindowFocus: false } });
+  const createFeedback = useCreateFeedback({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListFeedbackQueryKey() });
+        setSubmitted(true);
+        setLocalStatusIndex(0);
+        showToast('Signal received. Thank you for moving the campus forward.');
+      },
+      onError: () => showToast('Your signal could not be saved. Please try again.'),
+    },
+  });
+  const updateAction = useUpdateAction({
+    mutation: {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getListActionsQueryKey() }),
+      onError: () => showToast('That status could not be saved. Please try again.'),
+    },
+  });
+  const feedback = feedbackQuery.data ?? [];
+  const actions = actionsQuery.data ?? [];
+  const feedbackCount = feedback.length;
+  const averageRating = feedbackCount ? Number((feedback.reduce((sum, item) => sum + item.rating, 0) / feedbackCount).toFixed(1)) : 0;
+  const firstAction = actions[0];
+  const persistedStatusIndex = firstAction ? Math.max(0, statusLabels.indexOf(firstAction.status as ActionStatus)) : 0;
+  const [localStatusIndex, setLocalStatusIndex] = useState<StatusIndex | null>(null);
+  const statusIndex = localStatusIndex ?? (persistedStatusIndex as StatusIndex);
+  const ratingData = useMemo(() => [...seededRatingData.slice(0, -1), { month: 'Now', score: averageRating || 4.6, responses: feedbackCount }], [averageRating, feedbackCount]);
+  const categories = useMemo(() => {
+    if (!feedback.length) return initialCategories;
+    const palette = ['#df7064', '#1e6a5b', '#eab171', '#7fae9a', '#a9a89a'];
+    const names = ['Hostel', 'Mess / Food', 'Academic', 'Well-being', 'Other'];
+    return names.map((name, index) => ({
+      name,
+      value: Math.round((feedback.filter((item) => item.category === name).length / feedback.length) * 100),
+      color: palette[index],
+    }));
+  }, [feedback]);
   const [submitted, setSubmitted] = useState(false);
   const [toast, setToast] = useState('');
-  const [form, setForm] = useState({ category: 'Hostel & housing', location: 'North Campus · Hostel 3', rating: 0, message: '' });
+  const [form, setForm] = useState({ category: 'Hostel', location: 'North Campus · Hostel 3', rating: 0, issue: 'Maintenance', message: '' });
 
   const showToast = (message: string) => {
     setToast(message);
@@ -143,19 +190,11 @@ function App() {
 
   const submitFeedback = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!form.rating || !form.message.trim()) {
+    if (!form.rating || !form.message.trim() || !form.issue.trim()) {
       showToast('Add a rating and a few words so your signal can travel.');
       return;
     }
-    const nextCount = feedbackCount + 1;
-    const nextAverage = Number(((averageRating * feedbackCount + form.rating) / nextCount).toFixed(1));
-    setFeedbackCount(nextCount);
-    setAverageRating(nextAverage);
-    setRatingData((current) => [...current.slice(-6), { month: 'Now', score: nextAverage, responses: nextCount }]);
-    setCategories((current) => current.map((item) => item.name === form.category ? { ...item, value: item.value + 1 } : item));
-    setSubmitted(true);
-    setStatusIndex(0);
-    showToast('Signal received. Thank you for moving the campus forward.');
+    createFeedback.mutate({ data: form });
   };
 
   return (
@@ -168,9 +207,12 @@ function App() {
             <a href="#insights" data-testid="link-insights">Insights</a>
             <a href="#impact" data-testid="link-impact">Impact loop</a>
           </nav>
-          <button className="topbar-action" onClick={() => scrollTo('share')} data-testid="button-share-header">
-            Share feedback <ArrowDownRight size={14} strokeWidth={2.5} />
-          </button>
+           <div className="topbar-actions">
+             <a className="topbar-admin-link" href="/admin" data-testid="link-admin-mode">Admin workspace <ArrowUpRight size={14} /></a>
+             <button className="topbar-action" onClick={() => scrollTo('share')} data-testid="button-share-header">
+               Share feedback <ArrowDownRight size={14} strokeWidth={2.5} />
+             </button>
+           </div>
         </div>
       </header>
 
@@ -274,18 +316,19 @@ function App() {
               <AnimatePresence mode="wait">
                 {submitted ? (
                   <motion.div className="success-state" key="success" initial={{ opacity: 0, scale: .98 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: .35 }} data-testid="status-feedback-success">
-                    <div><div className="success-symbol"><Check size={25} /></div><h3>That signal<br />is now in motion.</h3><p>Thank you for helping the campus see what matters. Together, small signals become a better day for someone else.</p><button className="quiet-btn" onClick={() => { setSubmitted(false); setForm((current) => ({ ...current, rating: 0, message: '' })); }} data-testid="button-share-another">Share another signal</button></div>
+                     <div><div className="success-symbol"><Check size={25} /></div><h3>That signal<br />is now in motion.</h3><p>Thank you for helping the campus see what matters. Together, small signals become a better day for someone else.</p><button className="quiet-btn" onClick={() => { setSubmitted(false); setForm((current) => ({ ...current, rating: 0, message: '' })); }} data-testid="button-share-another">Share another signal</button></div>
                   </motion.div>
                 ) : (
                   <motion.form className="feedback-form" key="form" onSubmit={submitFeedback} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: .3 }} data-testid="form-feedback">
                     <div className="eyebrow" style={{ marginBottom: 20 }}>A two-minute pulse</div>
-                    <div className="form-grid">
-                      <div className="field"><label htmlFor="feedback-category">Category</label><select id="feedback-category" value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} data-testid="select-category"><option>Hostel & housing</option><option>Campus life</option><option>Teaching & learning</option><option>Wellbeing</option><option>Other</option></select></div>
+                     <div className="form-grid">
+                       <div className="field"><label htmlFor="feedback-category">Category</label><select id="feedback-category" value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} data-testid="select-category"><option>Mess / Food</option><option>Hostel</option><option>Academic</option><option>Wi-Fi & Facilities</option><option>Well-being</option><option>Other</option></select></div>
                       <div className="field"><label htmlFor="feedback-location">Where did this happen?</label><select id="feedback-location" value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} data-testid="select-location"><option>North Campus · Hostel 3</option><option>South Campus · Library</option><option>Central Campus · Canteen</option><option>Online / off campus</option></select></div>
+                       <div className="field"><label htmlFor="feedback-issue">Issue</label><input id="feedback-issue" value={form.issue} onChange={(event) => setForm({ ...form, issue: event.target.value })} placeholder="Maintenance, food quality, Wi-Fi..." data-testid="input-issue" /></div>
                       <div className="field full"><label>How was the experience?</label><div className="rating-row" role="group" aria-label="Experience rating">{[1, 2, 3, 4, 5].map((rating) => <button type="button" key={rating} className={`rating-choice ${form.rating === rating ? 'selected' : ''}`} onClick={() => setForm({ ...form, rating })} aria-label={`${rating} out of 5`} data-testid={`button-rating-${rating}`}>{rating}</button>)}</div></div>
                       <div className="field full"><label htmlFor="feedback-message">Tell us what happened</label><textarea id="feedback-message" value={form.message} onChange={(event) => setForm({ ...form, message: event.target.value })} placeholder="A moment, a place, a pattern you have noticed..." data-testid="textarea-feedback" /></div>
                     </div>
-                    <div className="form-actions"><span className="privacy-note"><ShieldCheck size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Shared with university teams as an anonymous signal.</span><button className="primary-btn" type="submit" data-testid="button-submit-feedback">Send my signal <Send size={14} /></button></div>
+                     <div className="form-actions"><span className="privacy-note"><ShieldCheck size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} /> Shared with university teams as an anonymous signal.</span><button className="primary-btn" type="submit" disabled={createFeedback.isPending} data-testid="button-submit-feedback">{createFeedback.isPending ? 'Sending…' : 'Send my signal'} <Send size={14} /></button></div>
                   </motion.form>
                 )}
               </AnimatePresence>
@@ -300,7 +343,7 @@ function App() {
               <div className="flow-track" aria-label="Student to impact flow">
                 {flowSteps.map((step, index) => { const Icon = step.icon; return <motion.div className={`flow-step ${index < statusIndex ? 'done' : ''} ${index === statusIndex ? 'active' : ''}`} key={step.label} animate={{ y: index === statusIndex ? -4 : 0 }} transition={{ duration: .3 }} data-testid={`flow-step-${step.label.toLowerCase()}`}><div className="flow-node"><Icon size={17} /></div><p>{step.label}</p><small>{step.caption}</small></motion.div>; })}
               </div>
-              <div className="flow-controls" role="group" aria-label="Update action status">{statusLabels.map((label, index) => <button key={label} className={`status-btn ${statusIndex === index ? 'active' : ''}`} onClick={() => setStatusIndex(index as StatusIndex)} data-testid={`button-status-${label.toLowerCase().replace(' ', '-')}`}>{index < statusIndex && <Check size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />}{label}</button>)}</div>
+              <div className="flow-controls" role="group" aria-label="Update action status">{statusLabels.map((label, index) => <button key={label} className={`status-btn ${statusIndex === index ? 'active' : ''}`} onClick={() => { setLocalStatusIndex(index as StatusIndex); if (firstAction) updateAction.mutate({ id: firstAction.id, data: { status: label as ActionStatus } }); }} data-testid={`button-status-${label.toLowerCase().replace(' ', '-')}`}>{index < statusIndex && <Check size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />}{label}</button>)}</div>
             </Reveal>
             <Reveal delay={0.12}>
               <div className="impact-story" data-testid="impact-story">
@@ -327,6 +370,28 @@ function App() {
       <footer className="footer"><div className="container footer-inner"><strong>apna saathi</strong><span>Built for honest signals, thoughtful action, and better campus days.</span></div></footer>
       <AnimatePresence>{toast && <motion.div className="toast" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }} data-testid="status-toast">{toast}</motion.div>}</AnimatePresence>
     </div>
+  );
+}
+
+function AdminSectionRoute() {
+  const [, params] = useRoute<{ section: string }>('/admin/:section');
+  return <AdminApp section={params?.section ?? 'overview'} />;
+}
+
+const queryClient = new QueryClient();
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <Switch>
+          <Route path="/" component={StudentApp} />
+          <Route path="/admin" component={() => <AdminApp section="overview" />} />
+          <Route path="/admin/:section" component={AdminSectionRoute} />
+          <Route component={StudentApp} />
+        </Switch>
+      </WouterRouter>
+    </QueryClientProvider>
   );
 }
 
